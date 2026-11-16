@@ -1,0 +1,168 @@
+' Paste this code into the code window of a UserForm named frmPhrasePicker.
+' Add controls with these exact (Name) properties:
+' TextBox: txtSearch
+' ListBox: lstMatches
+' ListBox: lstSelected
+' CommandButton: cmdAdd
+' CommandButton: cmdRemove
+' CommandButton: cmdInsert
+' CommandButton: cmdCancel
+
+Option Explicit
+
+Private mPhrases As Collection
+
+Public Function ReadPhrases(ByVal fullPath As String) As Boolean
+    Dim libraryWorkbook As Workbook
+    Dim existingWorkbook As Workbook
+    Dim librarySheet As Worksheet
+    Dim openedByMacro As Boolean
+    Dim oldScreenUpdating As Boolean
+    Dim lastRow As Long
+    Dim rowNum As Long
+    Dim cellValue As Variant
+    Dim phrase As String
+    Dim errorText As String
+
+    On Error GoTo ReadError
+    Set mPhrases = New Collection
+    oldScreenUpdating = Application.ScreenUpdating
+    Application.ScreenUpdating = False
+
+    ' Use the library if it is already open; otherwise open it read-only.
+    For Each existingWorkbook In Application.Workbooks
+        If StrComp(existingWorkbook.FullName, fullPath, vbTextCompare) = 0 Then
+            Set libraryWorkbook = existingWorkbook
+            Exit For
+        End If
+    Next existingWorkbook
+
+    If libraryWorkbook Is Nothing Then
+        Set libraryWorkbook = Application.Workbooks.Open( _
+            Filename:=fullPath, UpdateLinks:=0, _
+            ReadOnly:=True, AddToMru:=False)
+        openedByMacro = True
+    End If
+
+    Set librarySheet = libraryWorkbook.Worksheets("PhraseLibrary")
+    lastRow = librarySheet.Cells(librarySheet.Rows.Count, "A").End(xlUp).Row
+
+    For rowNum = 2 To lastRow
+        cellValue = librarySheet.Cells(rowNum, "A").Value2
+        If Not IsError(cellValue) Then
+            phrase = Trim$(CStr(cellValue))
+            If Len(phrase) > 0 Then mPhrases.Add phrase
+        End If
+    Next rowNum
+
+    If openedByMacro Then libraryWorkbook.Close SaveChanges:=False
+    Application.ScreenUpdating = oldScreenUpdating
+
+    RefreshMatches
+    If mPhrases.Count = 0 Then
+        MsgBox "No phrases were found in column A of the PhraseLibrary sheet.", vbExclamation
+    Else
+        ReadPhrases = True
+    End If
+    Exit Function
+
+ReadError:
+    errorText = Err.Description
+    On Error Resume Next
+    If openedByMacro Then libraryWorkbook.Close SaveChanges:=False
+    Application.ScreenUpdating = oldScreenUpdating
+    MsgBox "Could not read the phrase library: " & errorText, vbExclamation
+End Function
+
+Private Sub RefreshMatches()
+    Dim index As Long
+    Dim term As String
+
+    lstMatches.Clear
+    If mPhrases Is Nothing Then Exit Sub
+
+    term = Trim$(txtSearch.Text)
+
+    For index = 1 To mPhrases.Count
+        If InStr(1, CStr(mPhrases(index)), term, vbTextCompare) > 0 Then
+            lstMatches.AddItem CStr(mPhrases(index))
+        End If
+    Next index
+
+    If lstMatches.ListCount > 0 Then lstMatches.ListIndex = 0
+End Sub
+
+Private Sub txtSearch_Change()
+    RefreshMatches
+End Sub
+
+Private Sub AddCurrentPhrase()
+    If lstMatches.ListIndex < 0 Then Exit Sub
+
+    lstSelected.AddItem lstMatches.Value
+    txtSearch.Text = ""
+    txtSearch.SetFocus
+End Sub
+
+Private Sub cmdAdd_Click()
+    AddCurrentPhrase
+End Sub
+
+Private Sub lstMatches_DblClick(ByVal Cancel As MSForms.ReturnBoolean)
+    AddCurrentPhrase
+End Sub
+
+Private Sub txtSearch_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = vbKeyReturn Then
+        AddCurrentPhrase
+        KeyCode = 0
+    End If
+End Sub
+
+Private Sub cmdRemove_Click()
+    If lstSelected.ListIndex >= 0 Then
+        lstSelected.RemoveItem lstSelected.ListIndex
+    End If
+End Sub
+
+Private Sub cmdInsert_Click()
+    Dim index As Long
+    Dim outputText As String
+    Dim hadContent As Boolean
+
+    If lstSelected.ListCount = 0 Then
+        MsgBox "Choose at least one phrase first.", vbInformation
+        Exit Sub
+    End If
+
+    If PickerTarget Is Nothing Then
+        MsgBox "The destination cell is no longer available.", vbExclamation
+        Exit Sub
+    End If
+
+    For index = 0 To lstSelected.ListCount - 1
+        If index > 0 Then outputText = outputText & vbLf
+        outputText = outputText & CStr(lstSelected.List(index))
+    Next index
+
+    hadContent = Not IsEmpty(PickerTarget.Value2)
+    If hadContent Then
+        If MsgBox("Replace the current contents of the selected cell?", _
+                  vbQuestion + vbYesNo, "Confirm replacement") <> vbYes Then
+            Exit Sub
+        End If
+    End If
+
+    On Error GoTo InsertError
+    PickerTarget.Value2 = outputText
+    PickerTarget.WrapText = True
+    Unload Me
+    Exit Sub
+
+InsertError:
+    MsgBox "The phrase could not be inserted: " & Err.Description, vbExclamation
+End Sub
+
+Private Sub cmdCancel_Click()
+    Unload Me
+End Sub
